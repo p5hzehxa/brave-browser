@@ -23,14 +23,19 @@ jobs:
           set -eEo pipefail
           shopt -s inherit_errexit
 
-          if advisory_id="$(cut -d' ' -f3 <<<"${ISSUE_TITLE:?}"|grep -oP 'GHSA-\w+-\w+-\w+')"; then
-              advisory_details="$(gh api -H "Accept: application/vnd.github+json" "/advisories/$advisory_id" \
-                  -q '.cwes[].cwe_id + "\n" + .summary + "\n" + .description')"
+          if ! advisory_id="$(cut -d' ' -f3 <<<"${ISSUE_TITLE:?}"|grep -oP 'GHSA-\w+-\w+-\w+')"; then
+              echo "::warning::No GHSA advisory ID found in issue title: ${ISSUE_TITLE}"
+              exit 0
+          fi
 
-              if grep -qwiE "${IGNORE_PAT:?}" <<<"${advisory_details:?}"; then
-                  gh -R "${GITHUB_REPOSITORY_OWNER:?}"/audit-config workflow run create_pull_request.yml \
-                      -f advisory="${advisory_id:?}" \
-                      -f issue="${ISSUE_URL:?}"
-                  echo "Opened a PR to ignore $advisory_id"|tee "${GITHUB_STEP_SUMMARY:?}"
-              fi
+          advisory_details="$(gh api -H "Accept: application/vnd.github+json" "/advisories/${advisory_id:?}" \
+              -q '.cwes[].cwe_id + "\n" + .summary + "\n" + .description')"
+
+          if grep -qwiE "${IGNORE_PAT:?}" <<<"${advisory_details:?}"; then
+              gh -R "${GITHUB_REPOSITORY_OWNER:?}"/audit-config workflow run create_pull_request.yml \
+                  -f advisory="${advisory_id:?}" \
+                  -f issue="${ISSUE_URL:?}"
+              echo "Opened a PR to ignore $advisory_id"|tee -a "${GITHUB_STEP_SUMMARY:?}"
+          else
+              echo "$advisory_id does not match the ignore criteria, leaving the finding open"|tee -a "${GITHUB_STEP_SUMMARY:?}"
           fi

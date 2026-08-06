@@ -17,14 +17,29 @@ jobs:
           set -eEo pipefail
           shopt -s inherit_errexit
 
-          while read -r number last_active; do
-              if (( ($(date +%s) - $(date -d "${last_active:?}" +%s)) / 86400 > 30 )); then
-                  sleep 5
-                  gh issue close -R "$GITHUB_REPOSITORY" "${number:?}" -c "Autoclosing due to inactivity"
-              fi
-          done < <(gh issue list \
+          # Assign before looping: a failure of the listing in a process
+          # substitution would leave the loop with no input and the job green.
+          issues="$(gh issue list \
               -R "${GITHUB_REPOSITORY:?}" \
               -l bot/type/audit \
               -S sort:updated-asc \
               --json number,createdAt,comments \
-              -q '.[]|"\(.number)\t\((.comments|sort_by(.createdAt)|.[-1].createdAt) // .createdAt)"')
+              -q '.[]|"\(.number)\t\((.comments|sort_by(.createdAt)|.[-1].createdAt) // .createdAt)"')"
+
+          failed=()
+
+          while read -r number last_active; do
+              [[ -n $number ]] || continue
+              if (( ($(date +%s) - $(date -d "${last_active:?}" +%s)) / 86400 > 30 )); then
+                  sleep 5
+                  if ! gh issue close -R "$GITHUB_REPOSITORY" "${number:?}" -c "Autoclosing due to inactivity"; then
+                      echo "::error::Failed to close issue #${number}"
+                      failed+=("$number")
+                  fi
+              fi
+          done <<<"$issues"
+
+          if (( ${#failed[@]} )); then
+              echo "Failed to close ${#failed[@]} issue(s): ${failed[*]}" >&2
+              exit 1
+          fi
